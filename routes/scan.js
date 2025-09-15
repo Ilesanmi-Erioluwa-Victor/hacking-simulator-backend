@@ -6,24 +6,61 @@ const { authenticateToken } = require("../middleware/auth");
 const { logger } = require("../utils/logger");
 const router = express.Router();
 
-// Validation function for targets
-const isValidTarget = (target) => {
-  const allowedTargets = [
-    "localhost",
-    "127.0.0.1",
-    "example.com",
-    "test.com",
-    "example.org",
-    "scanme.nmap.org", // Nmap's official test domain
-  ];
-
-  const invalidChars = /[;&|<>$`]/;
-  if (invalidChars.test(target)) {
-    return false;
+function normalizeTarget(input) {
+  if (!input || typeof input !== "string") return "";
+  try {
+    // If input already looks like a hostname, new URL() will throw — so try adding protocol
+    let u;
+    if (/^[a-zA-Z0-9.-]+(:\d+)?$/.test(input)) {
+      u = new URL(`http://${input}`);
+    } else {
+      u = new URL(input);
+    }
+    return u.hostname.toLowerCase();
+  } catch (e) {
+    // fallback: strip common bad chars and whitespace
+    return input
+      .trim()
+      .toLowerCase()
+      .replace(/^[\/]+|[\/]+$/g, "");
   }
+}
 
-  // Allow only specific test domains or localhost
-  return allowedTargets.includes(target);
+/**
+ * Allowed targets list (keep small and explicit)
+ * You can add targets here or provide them via ALLOWED_TARGETS env var (comma separated)
+ */
+const envList = (process.env.ALLOWED_TARGETS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const hardcoded = [
+  "localhost",
+  "127.0.0.1",
+  "example.com",
+  "test.com",
+  "example.org",
+  "scanme.nmap.org", // nmap test host
+  "ogharapoly.edu.ng", // <--- added by request
+  "www.ogharapoly.edu.ng",
+];
+
+// final allowed set (env var takes precedence when present)
+const allowedTargets = new Set(envList.length ? envList : hardcoded);
+
+const isValidTarget = (raw) => {
+  if (!raw || typeof raw !== "string") return false;
+
+  // disallow dangerous injection characters
+  const invalidChars = /[;&|<>$`]/;
+  if (invalidChars.test(raw)) return false;
+
+  // normalize to hostname
+  const host = normalizeTarget(raw);
+  if (!host) return false;
+
+  // Only allow exact matches to the allowed set (no wildcarding)
+  return allowedTargets.has(host);
 };
 
 // Nmap scan endpoint
